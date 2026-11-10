@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full bg-slate-950 text-slate-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TuLote • Importador & Mapeador CAD de Parcelas (FastAPI)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome 6 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        .lot-poly {
+            transition: fill 0.15s ease, stroke 0.15s ease, stroke-width 0.15s ease;
+            cursor: pointer;
+        }
+        .lot-poly:hover {
+            fill: rgba(59, 130, 246, 0.45) !important;
+            stroke: #3b82f6 !important;
+            stroke-width: 2.5 !important;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #090e17; }
+        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #334155; }
+    </style>
+</head>
+<body class="h-full flex flex-col font-sans select-none overflow-hidden">
+
+    <!-- TOPBAR PROFESIONAL -->
+    <header class="h-14 bg-slate-900/95 border-b border-slate-800 px-4 flex items-center justify-between z-30 flex-shrink-0 backdrop-blur-md">
+        <!-- Logo & Título -->
+        <div class="flex items-center space-x-3">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#ff0040] to-rose-500 text-white flex items-center justify-center font-black shadow-lg shadow-rose-500/25">
+                <i class="fa-solid fa-draw-polygon text-base"></i>
+            </div>
+            <div>
+                <h1 class="text-sm font-black text-white flex items-center space-x-2">
+                    <span>TuLote CAD Importer</span>
+                    <span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">FastAPI + Shapely</span>
+                </h1>
+                <p class="text-[11px] text-slate-400">Extractor de polígonos exactos de agrimensura y mojones</p>
+            </div>
+        </div>
+
+        <!-- Botones de Demostración Rápida & Subida -->
+        <div class="flex items-center space-x-2">
+            <!-- Muestra 1: Los Cerritos -->
+            <button type="button" onclick="App.loadSample('los_cerritos')" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition flex items-center space-x-1.5">
+                <i class="fa-solid fa-bolt text-amber-400"></i>
+                <span>Los Cerritos (M210)</span>
+            </button>
+
+            <!-- Muestra 2: Saenz Funes -->
+            <button type="button" onclick="App.loadSample('saenz_funes')" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition flex items-center space-x-1.5">
+                <i class="fa-solid fa-map text-sky-400"></i>
+                <span>Sáenz Funes</span>
+            </button>
+
+            <div class="h-6 w-px bg-slate-800 mx-1"></div>
+
+            <!-- Subir PDF propio -->
+            <label class="cursor-pointer px-4 py-1.5 rounded-xl bg-[#ff0040] hover:bg-[#e60039] text-white text-xs font-black transition shadow-md shadow-[#ff0040]/30 flex items-center space-x-1.5">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <span>Subir PDF Nuevo</span>
+                <input type="file" id="pdfFileInput" accept="application/pdf" class="hidden" onchange="App.handleFile(event)">
+            </label>
+        </div>
+    </header>
+
+    <!-- CUERPO PRINCIPAL: CANVAS INTERACTIVO + PANEL DERECHO -->
+    <div class="flex-1 flex overflow-hidden relative">
+
+        <!-- VIEWPORT DEL MAPA -->
+        <div id="viewport" class="flex-1 relative overflow-hidden bg-[#060b13] cursor-grab select-none">
+            
+            <!-- Placeholder si no hay mapa -->
+            <div id="dropzone" class="absolute inset-0 flex flex-col items-center justify-center p-8 z-10 bg-slate-950/80 backdrop-blur-sm transition-all border-2 border-dashed border-slate-800 m-6 rounded-3xl hover:border-[#ff0040]/50">
+                <div class="w-20 h-20 rounded-3xl bg-slate-900 border border-slate-800 text-slate-400 flex items-center justify-center text-3xl mb-4 shadow-xl">
+                    <i class="fa-solid fa-file-pdf text-[#ff0040]"></i>
+                </div>
+                <h3 class="text-base font-bold text-white mb-1">Arrastrá un Plano de Agrimensura (PDF) aquí</h3>
+                <p class="text-xs text-slate-400 mb-6 text-center max-w-md">El motor vectorial de Python extraerá automáticamente los cuadriláteros, mojones, números de lote y manzana sin deformaciones.</p>
+                
+                <div class="flex items-center space-x-3">
+                    <label class="cursor-pointer px-5 py-2.5 rounded-xl bg-[#ff0040] hover:bg-[#e60039] text-white text-xs font-black transition shadow-lg shadow-[#ff0040]/30 flex items-center space-x-2">
+                        <i class="fa-solid fa-folder-open"></i>
+                        <span>Explorar Archivos</span>
+                        <input type="file" accept="application/pdf" class="hidden" onchange="App.handleFile(event)">
+                    </label>
+                    <button type="button" onclick="App.loadSample('los_cerritos')" class="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition flex items-center space-x-2">
+                        <i class="fa-solid fa-play text-emerald-400"></i>
+                        <span>Cargar Ejemplo Los Cerritos</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Escena de Pan & Zoom -->
+            <div id="scene" class="origin-top-left absolute top-0 left-0" style="transform: translate(0px, 0px) scale(1);">
+                <div id="canvasBox" class="relative">
+                    <img id="bgImg" class="block max-w-none pointer-events-none" style="display:none;" />
+                    <svg id="svgLayer" class="absolute inset-0 pointer-events-auto" style="display:none;">
+                        <g id="svgLotsGroup"></g>
+                        <g id="svgLabelsGroup"></g>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Loader Flotante -->
+            <div id="loader" class="hidden absolute inset-0 bg-slate-950/80 backdrop-blur-md z-40 flex flex-col items-center justify-center text-white">
+                <div class="w-12 h-12 border-4 border-[#ff0040] border-t-transparent rounded-full animate-spin mb-4"></div>
+                <h4 class="text-sm font-bold tracking-wide" id="loaderText">Procesando Vectores de AutoCAD...</h4>
+                <p class="text-xs text-slate-400 mt-1">Extrayendo polígonos de parcelas y mojones</p>
+            </div>
+
+            <!-- Controles Flotantes de Zoom -->
+            <div class="absolute top-4 right-4 z-20 flex items-center space-x-1.5 bg-slate-900/90 backdrop-blur-md p-1.5 rounded-2xl border border-slate-700/60 shadow-2xl">
+                <span id="zoomPill" class="px-2.5 py-1 bg-slate-800 rounded-xl text-white font-mono text-xs font-bold">100%</span>
+                <button type="button" onclick="App.zoomIn()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center text-xs transition"><i class="fa-solid fa-plus"></i></button>
+                <button type="button" onclick="App.zoomOut()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center text-xs transition"><i class="fa-solid fa-minus"></i></button>
+                <button type="button" onclick="App.resetZoom()" class="px-3 h-8 rounded-xl bg-[#ff0040] hover:bg-[#e60039] text-white flex items-center justify-center text-xs font-black transition">Ajustar</button>
+            </div>
+
+            <!-- Tooltip del Lote -->
+            <div id="tooltip" class="hidden absolute pointer-events-none z-30 bg-slate-900/95 text-white p-3 rounded-2xl border border-slate-700 shadow-2xl backdrop-blur-md min-w-[190px]">
+                <div class="flex items-center justify-between mb-1 pb-1 border-b border-slate-800">
+                    <span id="ttTitle" class="font-black text-sm text-white">Lote</span>
+                    <span id="ttBadge" class="text-[9px] font-black px-1.5 py-0.5 rounded uppercase"></span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                    <div><span class="text-slate-400 text-[10px] block">Área px:</span> <strong id="ttArea">0</strong></div>
+                    <div><span class="text-slate-400 text-[10px] block">Vértices:</span> <strong id="ttVerts">0</strong></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PANEL LATERAL DE CONTROL & EXPORTACIÓN -->
+        <aside class="w-80 bg-slate-900/95 border-l border-slate-800 flex flex-col z-20 flex-shrink-0 backdrop-blur-md">
+            
+            <!-- Resumen de Métricas -->
+            <div class="p-4 border-b border-slate-800 bg-slate-950/40">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-black uppercase tracking-wider text-slate-400">Resultado del Parser</span>
+                    <span id="blockBadge" class="px-2 py-0.5 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-bold">Sin plano</span>
+                </div>
+
+                <div class="grid grid-cols-3 gap-2 text-center">
+                    <div class="bg-slate-800/60 p-2 rounded-xl border border-slate-700/60">
+                        <span class="text-lg font-black text-white block" id="kpiTotal">0</span>
+                        <span class="text-[10px] text-slate-400 uppercase font-bold">Lotes</span>
+                    </div>
+                    <div class="bg-emerald-950/40 p-2 rounded-xl border border-emerald-800/40">
+                        <span class="text-lg font-black text-emerald-400 block" id="kpiDisp">0</span>
+                        <span class="text-[10px] text-emerald-300 uppercase font-bold">Disp</span>
+                    </div>
+                    <div class="bg-orange-950/40 p-2 rounded-xl border border-orange-800/40">
+                        <span class="text-lg font-black text-orange-400 block" id="kpiVend">0</span>
+                        <span class="text-[10px] text-orange-300 uppercase font-bold">Vend</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Buscador de Lotes -->
+            <div class="p-3 border-b border-slate-800 bg-slate-900">
+                <div class="relative">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-500 text-xs"></i>
+                    <input type="text" id="searchInput" oninput="App.filterLots(this.value)" placeholder="Buscar lote..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:ring-2 focus:ring-[#ff0040] focus:outline-none font-medium">
+                </div>
+            </div>
+
+            <!-- Lista de Lotes Detectados -->
+            <div id="lotsList" class="flex-1 overflow-y-auto p-3 space-y-1.5 text-xs">
+                <div class="text-center py-12 text-slate-500">
+                    <i class="fa-solid fa-layer-group text-2xl mb-2 text-slate-600 block"></i>
+                    <span>Cargá un plano para ver las parcelas</span>
+                </div>
+            </div>
+
+            <!-- Acciones de Exportación -->
+            <div class="p-3 border-t border-slate-800 bg-slate-950/60 space-y-2">
+                <button type="button" onclick="App.exportJson()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold py-2 rounded-xl text-xs transition flex items-center justify-center space-x-1.5">
+                    <i class="fa-solid fa-file-code text-sky-400"></i>
+                    <span>Descargar JSON de Lotes</span>
+                </button>
+                <button type="button" onclick="App.exportGeoJson()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold py-2 rounded-xl text-xs transition flex items-center justify-center space-x-1.5">
+                    <i class="fa-solid fa-earth-americas text-emerald-400"></i>
+                    <span>Descargar GeoJSON</span>
+                </button>
+                <button type="button" onclick="App.copyForLaravel()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded-xl text-xs transition flex items-center justify-center space-x-1.5 shadow-md shadow-indigo-600/30">
+                    <i class="fa-solid fa-copy"></i>
+                    <span>Copiar Polígonos para Laravel</span>
+                </button>
+            </div>
+        </aside>
+    </div>
+
+    <!-- SCRIPT DE CONTROL Y VISOR SVG -->
+    <script>
+        const App = (function() {
+            let currentData = null;
+            let lotsMap = {};
+
+            // Pan & Zoom
+            let scale = 1.0;
+            let panX = 0, panY = 0;
+            let isDragging = false;
+            let startMouseX = 0, startMouseY = 0;
+            let startPanX = 0, startPanY = 0;
+
+            const viewport = document.getElementById('viewport');
+            const scene = document.getElementById('scene');
+            const canvasBox = document.getElementById('canvasBox');
+            const bgImg = document.getElementById('bgImg');
+            const svgLayer = document.getElementById('svgLayer');
+            const svgLotsGroup = document.getElementById('svgLotsGroup');
+            const svgLabelsGroup = document.getElementById('svgLabelsGroup');
+            const tooltip = document.getElementById('tooltip');
+            const dropzone = document.getElementById('dropzone');
+            const loader = document.getElementById('loader');
+
+            function init() {
+                setupPanZoom();
+                setupDragDrop();
+            }
+
+            function setupPanZoom() {
+                viewport.addEventListener('mousedown', (e) => {
+                    if (e.target.closest('.lot-poly') || e.target.closest('button')) return;
+                    isDragging = true;
+                    viewport.classList.add('cursor-grabbing');
+                    viewport.classList.remove('cursor-grab');
+                    startMouseX = e.clientX;
+                    startMouseY = e.clientY;
+                    startPanX = panX;
+                    startPanY = panY;
+                });
+
+                window.addEventListener('mousemove', (e) => {
+                    if (!isDragging) return;
+                    panX = startPanX + (e.clientX - startMouseX);
+                    panY = startPanY + (e.clientY - startMouseY);
+                    updateTransform();
+                });
+
+                window.addEventListener('mouseup', () => {
+                    if (isDragging) {
+                        isDragging = false;
+                        viewport.classList.remove('cursor-grabbing');
+                        viewport.classList.add('cursor-grab');
+                    }
+                });
+
+                viewport.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    const rect = viewport.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const mouseY = e.clientY - rect.top;
+
+                    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+                    const newScale = Math.min(Math.max(scale * zoomFactor, 0.1), 5.0);
+
+                    const factor = newScale / scale;
+                    panX = mouseX - (mouseX - panX) * factor;
+                    panY = mouseY - (mouseY - panY) * factor;
+                    scale = newScale;
+                    updateTransform();
+                }, { passive: false });
+            }
+
+            function updateTransform() {
+                scene.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+                document.getElementById('zoomPill').textContent = Math.round(scale * 100) + '%';
+            }
+
+            function zoomIn() { setZoom(scale * 1.25); }
+            function zoomOut() { setZoom(scale * 0.8); }
+            function setZoom(newScale) {
+                scale = Math.min(Math.max(newScale, 0.1), 5.0);
+                updateTransform();
+            }
+
+            function resetZoom() {
+                if (!currentData) return;
+                const vw = viewport.clientWidth || 800;
+                const vh = viewport.clientHeight || 600;
+                const iw = currentData.width;
+                const ih = currentData.height;
+                const scaleX = (vw - 40) / iw;
+                const scaleY = (vh - 40) / ih;
+                scale = Math.min(scaleX, scaleY, 1.0);
+                panX = Math.round((vw - iw * scale) / 2);
+                panY = Math.round((vh - ih * scale) / 2);
+                updateTransform();
+            }
+
+            function setupDragDrop() {
+                window.addEventListener('dragover', (e) => { e.preventDefault(); });
+                window.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        uploadFile(e.dataTransfer.files[0]);
+                    }
+                });
+            }
+
+            async function handleFile(e) {
+                const file = e.target.files[0];
+                if (file) uploadFile(file);
+            }
+
+            async function uploadFile(file) {
+                showLoader('Procesando PDF de Agrimensura...', 'Extrayendo vectores y números de lote');
+                try {
+                    const fd = new FormData();
+                    fd.append('file', file);
+                    const res = await fetch('/api/upload', { method: 'POST', body: fd });
+                    const data = await res.json();
+                    hideLoader();
+                    if (!data.success) throw new Error(data.detail || 'Error procesando archivo');
+                    renderData(data);
+                } catch (err) {
+                    hideLoader();
+                    alert('Error: ' + err.message);
+                }
+            }
+
+            async function loadSample(sampleName) {
+                showLoader(`Cargando ${sampleName === 'los_cerritos' ? 'Los Cerritos (M210)' : 'Sáenz Funes'}...`, 'Procesando con motor FastAPI');
+                try {
+                    const res = await fetch(`/api/sample/${sampleName}`);
+                    const data = await res.json();
+                    hideLoader();
+                    if (!data.success) throw new Error(data.detail || 'Error cargando muestra');
+                    renderData(data);
+                } catch (err) {
+                    hideLoader();
+                    alert('Error: ' + err.message);
+                }
+            }
+
+            function renderData(data) {
+                currentData = data;
+                dropzone.style.display = 'none';
+                bgImg.src = data.image_data;
+                bgImg.style.display = 'block';
+
+                const w = data.width;
+                const h = data.height;
+                canvasBox.style.width = w + 'px';
+                canvasBox.style.height = h + 'px';
+                svgLayer.style.display = 'block';
+                svgLayer.setAttribute('viewBox', `0 0 ${w} ${h}`);
+                svgLayer.setAttribute('width', w);
+                svgLayer.setAttribute('height', h);
+
+                // Mapear lotes
+                lotsMap = {};
+                (data.lots || []).forEach(l => { lotsMap[l.code] = l; });
+
+                renderPolygons();
+                renderList();
+                updateKpis();
+                document.getElementById('blockBadge').textContent = `Manzana ${data.block}`;
+                setTimeout(resetZoom, 50);
+            }
+
+            function getStatusStyle(st) {
+                if (st === 'VENDIDO') return { fill: 'rgba(239, 68, 68, 0.35)', stroke: '#ef4444' };
+                if (st === 'RESERVADO') return { fill: 'rgba(245, 158, 11, 0.35)', stroke: '#f59e0b' };
+                return { fill: 'rgba(16, 185, 129, 0.20)', stroke: '#10b981' };
+            }
+
+            function renderPolygons() {
+                svgLotsGroup.innerHTML = '';
+                svgLabelsGroup.innerHTML = '';
+
+                (currentData.lots || []).forEach(lot => {
+                    const pts = lot.polygon.map(p => `${p[0]},${p[1]}`).join(' ');
+                    const st = getStatusStyle(lot.status);
+
+                    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                    poly.setAttribute('points', pts);
+                    poly.setAttribute('fill', st.fill);
+                    poly.setAttribute('stroke', st.stroke);
+                    poly.setAttribute('stroke-width', '1.3');
+                    poly.setAttribute('vector-effect', 'non-scaling-stroke');
+                    poly.setAttribute('class', 'lot-poly');
+                    poly.setAttribute('id', 'poly-' + lot.code);
+
+                    poly.addEventListener('mouseenter', (e) => { showTooltip(lot, e); highlightRow(lot.code, true); });
+                    poly.addEventListener('mousemove', (e) => { moveTooltip(e); });
+                    poly.addEventListener('mouseleave', () => { hideTooltip(); highlightRow(lot.code, false); });
+                    poly.addEventListener('click', () => { toggleLotStatus(lot); });
+
+                    svgLotsGroup.appendChild(poly);
+
+                    // Etiqueta central limpia
+                    const cx = lot.centroid[0];
+                    const cy = lot.centroid[1];
+
+                    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    text.setAttribute('x', cx);
+                    text.setAttribute('y', cy);
+                    text.setAttribute('text-anchor', 'middle');
+                    text.setAttribute('dominant-baseline', 'central');
+                    text.setAttribute('fill', '#ffffff');
+                    text.setAttribute('font-weight', '800');
+                    text.setAttribute('font-size', '11');
+                    text.setAttribute('paint-order', 'stroke');
+                    text.setAttribute('stroke', '#090e17');
+                    text.setAttribute('stroke-width', '2.5');
+                    text.setAttribute('stroke-linejoin', 'round');
+                    text.setAttribute('class', 'pointer-events-none select-none');
+                    text.textContent = lot.number;
+
+                    svgLabelsGroup.appendChild(text);
+                });
+            }
+
+            function toggleLotStatus(lot) {
+                if (lot.status === 'DISPONIBLE') lot.status = 'VENDIDO';
+                else if (lot.status === 'VENDIDO') lot.status = 'RESERVADO';
+                else lot.status = 'DISPONIBLE';
+
+                const poly = document.getElementById('poly-' + lot.code);
+                if (poly) {
+                    const st = getStatusStyle(lot.status);
+                    poly.setAttribute('fill', st.fill);
+                    poly.setAttribute('stroke', st.stroke);
+                }
+                updateKpis();
+                renderList(document.getElementById('searchInput').value);
+                updateTooltipData(lot);
+            }
+
+            function renderList(query = '') {
+                const list = document.getElementById('lotsList');
+                list.innerHTML = '';
+                const q = query.toLowerCase().trim();
+
+                const filtered = (currentData?.lots || []).filter(l => {
+                    if (!q) return true;
+                    return l.code.toLowerCase().includes(q) || l.number.includes(q) || l.status.toLowerCase().includes(q);
+                });
+
+                if (filtered.length === 0) {
+                    list.innerHTML = '<div class="text-center py-8 text-slate-500">No se encontraron parcelas</div>';
+                    return;
+                }
+
+                filtered.forEach(lot => {
+                    const row = document.createElement('div');
+                    row.className = 'flex items-center justify-between p-2 rounded-xl bg-slate-950/60 hover:bg-slate-800/80 border border-slate-800 cursor-pointer transition';
+                    row.id = 'row-' + lot.code;
+
+                    let badgeColor = lot.status === 'VENDIDO' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' : (lot.status === 'RESERVADO' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30');
+
+                    row.innerHTML = `
+                        <div>
+                            <div class="font-extrabold text-white">Lote ${lot.number}</div>
+                            <span class="text-[9px] font-black px-1.5 py-0.5 rounded border ${badgeColor}">${lot.status}</span>
+                        </div>
+                        <div class="text-right text-[11px] text-slate-400">
+                            <div>${lot.polygon.length} vértices</div>
+                            <div>${Math.round(lot.area_px)} px²</div>
+                        </div>
+                    `;
+
+                    row.addEventListener('click', () => { toggleLotStatus(lot); });
+                    row.addEventListener('mouseenter', () => {
+                        const p = document.getElementById('poly-' + lot.code);
+                        if (p) { p.setAttribute('fill', 'rgba(59, 130, 246, 0.7)'); p.setAttribute('stroke', '#3b82f6'); }
+                    });
+                    row.addEventListener('mouseleave', () => {
+                        const p = document.getElementById('poly-' + lot.code);
+                        if (p) { const st = getStatusStyle(lot.status); p.setAttribute('fill', st.fill); p.setAttribute('stroke', st.stroke); }
+                    });
+
+                    list.appendChild(row);
+                });
+            }
+
+            function filterLots(val) { renderList(val); }
+
+            function highlightRow(code, active) {
+                const r = document.getElementById('row-' + code);
+                if (!r) return;
+                if (active) r.classList.add('bg-slate-800', 'border-sky-500');
+                else r.classList.remove('bg-slate-800', 'border-sky-500');
+            }
+
+            function showTooltip(lot, e) {
+                updateTooltipData(lot);
+                tooltip.classList.remove('hidden');
+                moveTooltip(e);
+            }
+
+            function moveTooltip(e) {
+                const vp = viewport.getBoundingClientRect();
+                let x = e.clientX - vp.left + 15;
+                let y = e.clientY - vp.top + 15;
+                if (x + 200 > vp.width) x = e.clientX - vp.left - 205;
+                if (y + 90 > vp.height) y = e.clientY - vp.top - 90;
+                tooltip.style.left = x + 'px';
+                tooltip.style.top = y + 'px';
+            }
+
+            function hideTooltip() { tooltip.classList.add('hidden'); }
+
+            function updateTooltipData(lot) {
+                document.getElementById('ttTitle').textContent = `Parcela N° ${lot.number}`;
+                const badge = document.getElementById('ttBadge');
+                badge.textContent = lot.status;
+                badge.className = 'text-[9px] font-black px-1.5 py-0.5 rounded uppercase ' + (lot.status === 'VENDIDO' ? 'bg-orange-500 text-white' : (lot.status === 'RESERVADO' ? 'bg-amber-500 text-white' : 'bg-emerald-500 text-white'));
+                document.getElementById('ttArea').textContent = Math.round(lot.area_px) + ' px²';
+                document.getElementById('ttVerts').textContent = lot.polygon.length;
+            }
+
+            function updateKpis() {
+                if (!currentData) return;
+                let disp = 0, vend = 0;
+                currentData.lots.forEach(l => {
+                    if (l.status === 'VENDIDO') vend++;
+                    else disp++;
+                });
+                document.getElementById('kpiTotal').textContent = currentData.lots.length;
+                document.getElementById('kpiDisp').textContent = disp;
+                document.getElementById('kpiVend').textContent = vend;
+            }
+
+            function showLoader(title, sub) {
+                loader.classList.remove('hidden');
+                document.getElementById('loaderText').textContent = title;
+            }
+            function hideLoader() { loader.classList.add('hidden'); }
+
+            function exportJson() {
+                if (!currentData) return alert('Primero cargá un plano');
+                const blob = new Blob([JSON.stringify(currentData.lots, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `lotes_manzana_${currentData.block}.json`;
+                a.click();
+            }
+
+            async function exportGeoJson() {
+                if (!currentData) return alert('Primero cargá un plano');
+                const res = await fetch('/api/export-geojson', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ lots: currentData.lots })
+                });
+                const geo = await res.json();
+                const blob = new Blob([JSON.stringify(geo, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `lotes_manzana_${currentData.block}.geojson`;
+                a.click();
+            }
+
+            function copyForLaravel() {
+                if (!currentData) return alert('Primero cargá un plano');
+                const dict = {};
+                currentData.lots.forEach(l => {
+                    dict[l.code] = l.polygon;
+                });
+                navigator.clipboard.writeText(JSON.stringify(dict, null, 2)).then(() => {
+                    alert(`¡Copiados ${currentData.lots.length} polígonos al portapapeles en formato JSON compatible con Laravel!`);
+                });
+            }
+
+            return {
+                init,
+                handleFile,
+                loadSample,
+                zoomIn,
+                zoomOut,
+                resetZoom,
+                filterLots,
+                exportJson,
+                exportGeoJson,
+                copyForLaravel
+            };
+        })();
+
+        document.addEventListener('DOMContentLoaded', App.init);
+    </script>
+</body>
+</html>
+
